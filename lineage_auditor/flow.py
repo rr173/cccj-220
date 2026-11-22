@@ -87,9 +87,9 @@ def _validate_sources(sources: List[Dict[str, Any]]) -> None:
             raise FlowValidationError(f"duplicate source name {name!r}")
         names.add(name)
         schema = s.get("schema")
-        if not schema or ROW_ID_COL in schema:
+        if schema is None or ROW_ID_COL in schema:
             raise FlowValidationError(
-                f"source {name!r} schema must be non-empty and must not declare "
+                f"source {name!r} needs a schema object and must not declare "
                 f"the reserved column {ROW_ID_COL!r}"
             )
         for c, t in schema.items():
@@ -380,7 +380,6 @@ def _resolve_join(
         return dict(left_schema)
     return out
 
-
 def _resolve_group(
     node: Dict[str, Any], schemas: Dict[str, Dict[str, str]]
 ) -> Dict[str, str]:
@@ -395,8 +394,10 @@ def _resolve_group(
             raise FlowValidationError(f"group {nid!r} duplicate output column {k!r}")
         out[k] = in_schema[k]
     aggs = node.get("aggs", [])
-    if not aggs:
-        raise FlowValidationError(f"group {nid!r} needs at least one aggregate")
+    # A group may legitimately declare no aggregate: it is then a pure row
+    # reducer over the grouping keys (and with no keys, the "exactly one row,
+    # even for empty input" baseline).  Static delivery slicing emits exactly
+    # this shape when no aggregate value has a downstream purpose.
     for a in aggs:
         name = a["name"]
         func = a.get("func")

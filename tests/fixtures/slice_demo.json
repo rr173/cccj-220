@@ -1,0 +1,100 @@
+{
+  "sources": [
+    {
+      "name": "src_flow",
+      "schema": {
+        "k": "int64",
+        "grp": "int64",
+        "hidden_a": "int64",
+        "hidden_b": "int64",
+        "label": "text",
+        "amount": "int64",
+        "score": "int64",
+        "tie": "int64"
+      },
+      "rows": [
+        {"row_id": 1, "values": {"k": 1, "grp": 10, "hidden_a": 91101, "hidden_b": 92202, "label": "DROP-LABEL-ALPHA", "amount": 70001, "score": 50, "tie": 1}},
+        {"row_id": 2, "values": {"k": 2, "grp": 10, "hidden_a": 91103, "hidden_b": -1, "label": "DROP-LABEL-BETA", "amount": 70002, "score": 40, "tie": 2}},
+        {"row_id": 3, "values": {"k": 3, "grp": 20, "hidden_a": -1, "hidden_b": 92204, "label": "DROP-LABEL-GAMMA", "amount": 70003, "score": 30, "tie": 3}},
+        {"row_id": 4, "values": {"k": 1, "grp": 20, "hidden_a": 91105, "hidden_b": 92206, "label": "DROP-LABEL-DELTA", "amount": 70004, "score": 20, "tie": 4}}
+      ]
+    },
+    {
+      "name": "src_lookup",
+      "schema": {"k": "int64", "rv": "int64", "rflag": "bool"},
+      "rows": [
+        {"row_id": 30, "values": {"k": 1, "rv": 40001, "rflag": true}},
+        {"row_id": 31, "values": {"k": 1, "rv": 40002, "rflag": true}},
+        {"row_id": 32, "values": {"k": 2, "rv": 40003, "rflag": false}},
+        {"row_id": 33, "values": {"k": 3, "rv": 40004, "rflag": true}},
+        {"row_id": 34, "values": {"k": 9, "rv": 40005, "rflag": true}}
+      ]
+    },
+    {
+      "name": "src_empty",
+      "schema": {"payload": "text"},
+      "rows": []
+    }
+  ],
+  "nodes": [
+    {"id": "scan_flow", "op": "scan", "source": "src_flow"},
+    {"id": "scan_lookup", "op": "scan", "source": "src_lookup"},
+    {"id": "scan_empty", "op": "scan", "source": "src_empty"},
+
+    {"id": "shared", "op": "project", "input": "scan_flow",
+     "columns": [
+       {"name": "k", "keep": "k"},
+       {"name": "label", "keep": "label"},
+       {"name": "ha", "keep": "hidden_a"},
+       {"name": "hb", "keep": "hidden_b"}
+     ]},
+
+    {"id": "cons_a", "op": "filter", "input": "shared",
+     "pred": {"kind": "cmp", "op": ">",
+              "left": {"kind": "col", "name": "ha"},
+              "right": {"kind": "lit", "value": 0}}},
+    {"id": "cons_b", "op": "filter", "input": "shared",
+     "pred": {"kind": "cmp", "op": ">",
+              "left": {"kind": "col", "name": "hb"},
+              "right": {"kind": "lit", "value": 0}}},
+
+    {"id": "proj_a", "op": "project", "input": "cons_a",
+     "columns": [
+       {"name": "k", "keep": "k"},
+       {"name": "name", "expr": {"kind": "lit", "value": "A"}}
+     ]},
+    {"id": "proj_b", "op": "project", "input": "cons_b",
+     "columns": [
+       {"name": "k", "keep": "k"},
+       {"name": "name", "expr": {"kind": "lit", "value": "B"}}
+     ]},
+
+    {"id": "union_ab", "op": "union_all", "inputs": ["proj_a", "proj_b"]},
+    {"id": "dist_ab", "op": "distinct", "input": "union_ab", "keys": ["k"]},
+
+    {"id": "join_dup", "op": "join", "kind": "inner",
+     "left": "dist_ab", "right": "scan_lookup",
+     "on": [{"left": "k", "right": "k"}],
+     "residual": {"kind": "col", "name": "r_rflag"},
+     "right_prefix": "r_"},
+
+    {"id": "grp_cnt", "op": "group", "input": "scan_flow",
+     "keys": ["grp"],
+     "aggs": [
+       {"name": "cnt", "func": "count", "arg": null},
+       {"name": "total", "func": "sum", "arg": "amount"}
+     ]},
+
+    {"id": "top_pick", "op": "top_k", "input": "scan_flow", "k": 1,
+     "partition_by": ["grp"],
+     "order_by": [
+       {"expr": {"kind": "col", "name": "score"}, "dir": "desc", "decisive": false},
+       {"expr": {"kind": "col", "name": "tie"}, "dir": "asc", "decisive": true}
+     ]},
+
+    {"id": "empty_rows", "op": "group", "input": "scan_empty",
+     "keys": [],
+     "aggs": [{"name": "rows", "func": "count", "arg": null}]}
+  ],
+  "sinks": ["dist_ab", "join_dup", "grp_cnt", "top_pick", "empty_rows"]
+}

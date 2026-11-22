@@ -59,12 +59,38 @@
 | 大分区 IN 列表分块 | `test_large_partition_exercises_in_list_chunking` | 650 候选分区正常点查与对账 |
 | CLI 端到端 | `TestCliPreview` 四用例 | run+preview 子进程、退出码、stderr JSON 状态、copy 包可预演 |
 
+## 交付列裁剪（slice-flow）覆盖
+
+`tests/test_slice.py`（31 用例）。验收合同：对任何同样 schema、在所选上游可成功
+计算的输入，把完整流程所选 sink 只投影到请求列，得到的类型、列名和行多重集，
+应与用对应精简输入运行新流程所得一致。每个成功用例都与独立解释器对账；代表性
+用例还会真实执行两个流程（DuckDB）比对业务袋。
+
+| 要求 | 用例 / 夹具 | 断言要点 |
+|---|---|---|
+| 逐列组合穷举对账 | `TestReferenceEquivalence.test_every_single_column_of_every_fixture` | 6 个夹具每个 sink 的每个非空列子集，参考解释器业务袋一致 |
+| 真实执行对账 | `test_representative_cases_through_the_executor` | filter/project/union/join/group/distinct/top_k/空输入全覆盖 |
+| 源 schema 与内联值物理收缩 | `TestPhysicalReduction`、`tests/fixtures/slice_demo.json` | 被裁字段在 schema 和每行 values 中都消失 |
+| 未使用的源/节点/投影/聚合项一并去除 | `test_unrelated_branch_removed_entirely`、`test_unused_aggregate_and_its_argument_dropped` | 无关分支整支消失；未投出的聚合及其参数删除 |
+| 共享中间节点的两个消费者各依赖不同隐藏列 | slice_demo `shared` / `test_shared_node_two_consumers_with_different_hidden_columns` | 共享节点被请求两列并集，不复制、不丢支路 |
+| 重新合流时重复出现 + 先后顺序决定去重代表 | slice_demo `dist_ab` / `test_distinct_keeps_first_representative_and_duplicates` | k=1 三份 A 出现，`distinct` 首个代表不变 |
+| 右表未投出字段改变匹配数 | slice_demo `join_dup` / `test_right_fields_change_match_count_even_if_not_delivered` | 保留右表键与残余标志；同值出现次数不变 |
+| 未投出的分组/排名字段改变结果 | `test_grouping_blocked_by_hidden_filter_changes_counts`、`test_unused_ranking_field_still_decides_top_k`、`test_top_k_pick_uses_hidden_tiebreak` | 分组键/过滤列/排名与决胜列即使不交付也保留 |
+| 只剩行数需求 | `test_row_count_only_source_supplies_no_business_field`、`test_row_count_only_source_with_union_keeps_row_identity` | 源 schema 变空，保留 `__row_id` 与行序；union 由 `__row_id` 承载 |
+| 输入为空仍可运行 | slice_demo `empty_rows` / `test_empty_input_row_count_still_runs` | 空输入聚合仍产出 1 行（count=0） |
+| 无效列名 / 非 sink 目标 / 不支持输入 | `TestRejections` 九用例 | 报原因、状态 rejected/unsupported、退出码 2、不输出流程 |
+| 换一批同 schema 值重跑 | `TestUniformityAcrossValueBatches` | 两个批次得到同一源声明与同一精简节点定义 |
+| CLI 端到端 | `TestCli` 两用例 | slice-flow --out → run 精简流程 → 与完整流程投影对账 |
+| 可重跑演练 | `scripts/slice_drill.py` | 完整流程投影行袋 → 精简供数运行 → 结果/源声明/证据核对 → 第二批值重跑 |
+
 ## 运行
 
 ```bash
 python3 -I tests/test_acceptance.py   # 34 用例
+python3 -I tests/test_slice.py        # 31 个交付列裁剪用例
 python3 -I tests/test_preview.py      # 44 个预演用例
 python3 -I tests/test_cli.py          # 2 个 CLI 端到端用例
+python3 -I scripts/slice_drill.py     # 交付裁剪可重跑演练
 python3 -I scripts/benchmark.py       # 规模实测 → out/benchmark_result.json
 python3 -I scripts/crosscheck_duckdb.py tests/fixtures/main_demo.json out/demo_pkg
 # 原生 DuckDB SQL 重算与落盘证据逐节点对账（top_k 由参考解释器覆盖）

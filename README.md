@@ -17,6 +17,7 @@ lineage_auditor/      生产包（不依赖 tests/）
   audit.py            trace-source / trace-output / node-balance（递归 CTE + 分页）
   preview.py          更正预演：一批查找表更正 → 指定 top_k 名单的进出差异
   preview_support.py  run 时一并构建的预演索引（点查专用单列表键）
+  slice.py            交付列裁剪：按所选 sink 静态派生精简流程（新供数合同）
   package.py          自包含审计包生命周期（running/completed/failed/cancelled）
   archive.py          历史库：五张核心证据表的内容寻址归档与按版本恢复
   cli.py              命令行
@@ -32,6 +33,7 @@ tests/
 scripts/benchmark.py        高扇出 + 大共同来源的分页/内存/证据规模实测
 scripts/crosscheck_duckdb.py 把流程渲染成原生 DuckDB SQL 重算，与落盘证据对账
 scripts/archive_drill.py    历史库可重跑演练（恢复对账/重试/冲突/中断/共享计量）
+scripts/slice_drill.py      交付列裁剪演练（投影对账/源声明/证据核对/换批重跑）
 docs/handwritten_tables.md  主演练逐节点手写出现表与去向表
 docs/acceptance_coverage.md 验收覆盖清单
 vendor/duckdb_pkg/    解包的 DuckDB wheel（环境无 pip 时使用）
@@ -59,6 +61,41 @@ python3 -I bin/auditor participation --package out/demo_pkg --node grp_main --oc
 # 6. 复制为可独立查询的包
 python3 -I bin/auditor copy-package --package out/demo_pkg --dest /tmp/pkg_copy
 ```
+
+## 交付列裁剪（slice-flow）
+
+下游只接收一张交付表的部分列时，新版供数协议只愿意提供这些列真正需要的源字段。
+`slice-flow` 直接从现有流程派生一份**精简流程 JSON**，可原样交给 `run`；精简后
+的源 schema 就是新的供数合同（不另建报告或清单）。裁剪是静态依赖分析，不执行数据，
+也不按当前这批值猜测。
+
+```bash
+python3 -I bin/auditor slice-flow --flow tests/fixtures/slice_demo.json \
+    --sink join_dup --columns name --out /tmp/sliced.json
+python3 -I bin/auditor run --flow /tmp/sliced.json --package out/sliced_pkg
+```
+
+**裁剪什么**：只处理所选 sink 的上游子图（用既有 inline 来源；生成型来源不支持，
+无关分支不影响能否裁剪）。被裁字段会从源 schema、内联行值、扫描、投影表达式和
+聚合项里真正删掉；不再需要的源、节点、整条投影链一并移除。
+
+**必须保留什么**（由声明决定，而非本批数据）：过滤谓词、连接两侧等值键与残余条件、
+分组键、去重键、分区与排名/决胜表达式用到的字段，即使不交付也保留。聚合参数只在
+其聚合值确有下游用途时才是业务依赖；即使一个聚合值都不交付，只要还经过分组，就保留
+分组语义（键与空输入基线 `count=0`）。`distinct` 的首个代表、`union_all` 的分支
+顺序与重复出现都不变。右表字段不交付不影响它改变匹配行数（多个键、残余条件），因此
+保留完整右输入、只删其无用列。共享中间节点只重写一次，不会为让两条支路都读到列而
+复制。
+
+**只剩行数需求的来源**可停供全部业务字段：源 schema 变空，保留 `__row_id` 和行序；
+若下游 union 必须携带一列，用 `__row_id` 承载，绝不复制原列或造空壳占位。
+
+**拒绝**：无效列名、非 sink 节点、生成型来源、空 `right_prefix`（左右列无法区分）
+等以 `rejected`/`unsupported` 报出原因（退出码 2），不输出精简流程。验收合同：对
+任何同样 schema、在所选上游可成功计算的输入，完整流程所选 sink 投影到请求列的
+类型、列名与行多重集，与用精简输入运行新流程一致（`tests/test_slice.py` 逐列组合
+穷举对账）。可重跑演练见 `scripts/slice_drill.py`（完整流程投影 → 精简供数运行 →
+源证据核对 → 换一批同 schema 值重跑）。
 
 ## 历史库归档与按版本恢复（archive / restore）
 
@@ -180,11 +217,13 @@ python3 -I bin/auditor preview --package out/pv_pkg --sink top1 --corrections co
 ```bash
 python3 -I tests/test_acceptance.py      # 34 用例，全部通过
 python3 -I tests/test_preview.py         # 44 个预演用例，全部通过
+python3 -I tests/test_slice.py           # 31 个交付列裁剪用例，全部通过
 python3 -I tests/test_archive.py         # 16 个历史库归档/恢复用例，全部通过
 python3 -I tests/test_cli.py             # 2 个 CLI 端到端用例
 python3 -I scripts/benchmark.py          # 高扇出分页/内存实测 → out/benchmark_result.json
 python3 -I scripts/crosscheck_duckdb.py tests/fixtures/main_demo.json out/demo_pkg
 python3 -I scripts/archive_drill.py      # 历史库演练：恢复对账/重试/冲突/中断/共享计量
+python3 -I scripts/slice_drill.py        # 交付裁剪演练：投影对账/源声明/证据核对/换批重跑
 ```
 
 `tests/reference_interpreter.py` 是与生产代码零共享的独立解释器：它用显式出现编号

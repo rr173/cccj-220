@@ -10,6 +10,7 @@ Commands:
   archive       store a completed package's evidence in a shared history library
   restore       rebuild a completed package for one archived version
   preview       rehearse lookup corrections against a top_k sink list
+  slice-flow    reduce a flow to the source fields one sink's delivery needs
 """
 from __future__ import annotations
 
@@ -26,6 +27,7 @@ from .audit import AuditReader
 from .executor import Executor
 from .package import AuditPackage, STATUS_CANCELLED, PackageError
 from .preview import PreviewError, preview
+from .slice import SliceError, slice_flow
 
 
 def _load_flow(path: str) -> Dict[str, Any]:
@@ -169,6 +171,25 @@ def cmd_preview(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_slice_flow(args: argparse.Namespace) -> int:
+    flow = _load_flow(args.flow)
+    columns = [c.strip() for c in args.columns.split(",")]
+    if columns == [""]:
+        columns = []
+    try:
+        reduced = slice_flow(flow, args.sink, columns)
+    except SliceError as exc:
+        print(json.dumps({"status": exc.status, "error": exc.message},
+                         ensure_ascii=False, indent=2), file=sys.stderr)
+        return 2
+    if args.out:
+        with open(args.out, "w", encoding="utf-8") as f:
+            json.dump(reduced, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+    _print(reduced)
+    return 0
+
+
 def cmd_archive(args: argparse.Namespace) -> int:
     """Archive a completed package's evidence into a shared history library."""
     result = HistoryArchive(args.library).archive(args.package, args.version)
@@ -273,6 +294,18 @@ def build_parser() -> argparse.ArgumentParser:
     rc = sub.add_parser("recover", help="mark a hard-killed 'running' package failed")
     rc.add_argument("--package", required=True)
     rc.set_defaults(fn=cmd_recover)
+
+    sf = sub.add_parser(
+        "slice-flow",
+        help="emit a reduced flow that delivers only the requested columns of "
+             "one declared sink; its reduced source schema is the new supply "
+             "contract (static dependency slicing, nothing is executed)")
+    sf.add_argument("--flow", required=True, help="existing flow JSON")
+    sf.add_argument("--sink", required=True, help="a declared sink of that flow")
+    sf.add_argument("--columns", required=True,
+                    help="comma-separated delivery column names at that sink")
+    sf.add_argument("--out", help="also write the reduced flow JSON to this file")
+    sf.set_defaults(fn=cmd_slice_flow)
 
     ar = sub.add_parser(
         "archive",
