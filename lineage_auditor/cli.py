@@ -7,6 +7,8 @@ Commands:
   node-balance  real occurrence accounting for every node
   participation count/sum membership evidence for one aggregate occurrence
   copy-package  produce an independent portable copy of a completed package
+  archive       store a completed package's evidence in a shared history library
+  restore       rebuild a completed package for one archived version
   preview       rehearse lookup corrections against a top_k sink list
 """
 from __future__ import annotations
@@ -19,6 +21,7 @@ import time
 from typing import Any, Dict, List
 
 from . import flow as F
+from .archive import ArchiveError, HistoryArchive
 from .audit import AuditReader
 from .executor import Executor
 from .package import AuditPackage, STATUS_CANCELLED, PackageError
@@ -166,6 +169,20 @@ def cmd_preview(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_archive(args: argparse.Namespace) -> int:
+    """Archive a completed package's evidence into a shared history library."""
+    result = HistoryArchive(args.library).archive(args.package, args.version)
+    _print(result)
+    return 0
+
+
+def cmd_restore(args: argparse.Namespace) -> int:
+    """Rebuild a completed package for an archived version into an empty dir."""
+    result = HistoryArchive(args.library).restore(args.version, args.dest)
+    _print(result)
+    return 0
+
+
 def cmd_recover(args: argparse.Namespace) -> int:
     """Explicitly close a package stuck in 'running' after a hard kill (SIGKILL)."""
     pkg = AuditPackage(args.package)
@@ -256,6 +273,29 @@ def build_parser() -> argparse.ArgumentParser:
     rc = sub.add_parser("recover", help="mark a hard-killed 'running' package failed")
     rc.add_argument("--package", required=True)
     rc.set_defaults(fn=cmd_recover)
+
+    ar = sub.add_parser(
+        "archive",
+        help="store a completed package's five evidence tables into a shared, "
+             "content-addressed history library (the source package is never "
+             "modified; versions are immutable)")
+    ar.add_argument("--package", required=True,
+                    help="completed audit package to archive (read-only)")
+    ar.add_argument("--library", required=True,
+                    help="history library directory (created on first archive)")
+    ar.add_argument("--version", required=True,
+                    help="version name under which the package is archived")
+    ar.set_defaults(fn=cmd_archive)
+
+    rs = sub.add_parser(
+        "restore",
+        help="rebuild a completed package for an archived version into an "
+             "empty directory; reads only from the history library")
+    rs.add_argument("--library", required=True)
+    rs.add_argument("--version", required=True)
+    rs.add_argument("--dest", required=True,
+                    help="destination package directory; must not exist")
+    rs.set_defaults(fn=cmd_restore)
     return p
 
 
@@ -264,6 +304,10 @@ def main(argv: List[str] = None) -> int:
     args = parser.parse_args(argv)
     try:
         return args.fn(args)
+    except ArchiveError as exc:
+        print(json.dumps({"status": "rejected", "error": str(exc)},
+                         ensure_ascii=False, indent=2), file=sys.stderr)
+        return 2
     except PackageError as exc:
         print(json.dumps({"error": str(exc)}, ensure_ascii=False), file=sys.stderr)
         return 3

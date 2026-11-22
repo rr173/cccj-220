@@ -18,16 +18,20 @@ lineage_auditor/      生产包（不依赖 tests/）
   preview.py          更正预演：一批查找表更正 → 指定 top_k 名单的进出差异
   preview_support.py  run 时一并构建的预演索引（点查专用单列表键）
   package.py          自包含审计包生命周期（running/completed/failed/cancelled）
+  archive.py          历史库：五张核心证据表的内容寻址归档与按版本恢复
   cli.py              命令行
 tests/
   reference_interpreter.py  独立小型出现级解释器（不 import 生产包/证据构建器）
   test_acceptance.py        业务袋 + 审计边全量对账，及边界语义测试（34 用例）
   test_preview.py           预演验收（44 用例：语义/拒绝/不支持/规模/CLI）
+  test_archive.py           历史库归档/恢复（16 用例：无损多重集/不可变/崩溃可见性）
   test_cli.py               CLI 端到端测试（2 用例）
   fixtures/                 main_demo / edge_cases / null_keys / unknown_residual
                             / diamond / scale_benchmark / preview_demo
+                            / archive_demo_v1 / archive_demo_v2
 scripts/benchmark.py        高扇出 + 大共同来源的分页/内存/证据规模实测
 scripts/crosscheck_duckdb.py 把流程渲染成原生 DuckDB SQL 重算，与落盘证据对账
+scripts/archive_drill.py    历史库可重跑演练（恢复对账/重试/冲突/中断/共享计量）
 docs/handwritten_tables.md  主演练逐节点手写出现表与去向表
 docs/acceptance_coverage.md 验收覆盖清单
 vendor/duckdb_pkg/    解包的 DuckDB wheel（环境无 pip 时使用）
@@ -55,6 +59,53 @@ python3 -I bin/auditor participation --package out/demo_pkg --node grp_main --oc
 # 6. 复制为可独立查询的包
 python3 -I bin/auditor copy-package --package out/demo_pkg --dest /tmp/pkg_copy
 ```
+
+## 历史库归档与按版本恢复（archive / restore）
+
+每周发布只改少数记录，却整份复制 `evidence.duckdb` 会让证据占多倍空间。
+`archive` 把**已完成**包的五张核心证据表（`occ`、`edges`、`rejects`、
+`participation`、`node_stats`）存入一个跨版本共享的历史库；`restore` 只凭
+版本名就能把当时的包无损重建到一个空目录，不依赖旧工作目录、也不重跑加工。
+
+```bash
+# 归档（只读原包，绝不修改；库目录首次自动创建）
+python3 -I bin/auditor archive --package out/rel_2026w47 \
+    --library out/history --version rel-2026w47
+
+# 恢复到一个不存在的目录；恢复包与原包五表全字段多重集完全一致
+python3 -I bin/auditor restore --library out/history \
+    --version rel-2026w47 --dest out/review_rel_2026w47
+```
+
+**为什么只改少数证据时不用重写整套负载**：每条证据行按**类型化的规范字节**
+（含表名、固定列序、NULL/布尔/整数/文本的显式标签）计算 SHA-256，行的物理
+顺序与 DuckDB 页布局不参与身份。同表的行按哈希分进内容寻址的**桶块**（桶数
+随表规模取 2 的幂，目标是每块约 4 行），桶块文件名就是其负载哈希；新版本里
+未变化的桶哈希不变、文件名不变，因此根本不重写，只有受影响的少数桶产生新
+文件。块内每条不同的行只存一份并带出现次数，所以重复边、同值不同出现都按
+多重集无损保留，而不会被按行值去重。版本目录只放各自的 `flow.json`、
+`manifest.json` 和一份只含哈希与计数的 `version.json`——证据负载不藏在清单或
+索引里，计量时 `chunks/` 下的字节就是实际证据字节。
+
+**不可变与幂等**：
+
+- 同名 + 同 flow/清单/证据重复归档：成功且不重复写任何证据（`already_archived`）；
+- 同名但任一内容不同：明确拒绝（exit 2），已归档版本永不覆盖；
+- 不同版本名可以登记完全相同的证据（共享同一份桶块，零新增证据字节）；
+- 未完成（running/failed/cancelled）或缺任一核心证据表的包一律拒绝。
+
+**整体可见性**：桶块全部是不可变的内容寻址文件，版本仅在 `versions/<名>/`
+目录被原子改名后才可见。写入中途被硬杀：旧版本照常可恢复，新版本尚不可见、
+可安全重试（重试时已落盘的桶块自动跳过）；一旦可见，它引用的每个块都已在
+库中，必然能完整恢复。恢复只从历史库读，先在同级临时目录构建，成功才改名到
+目标；目标目录已存在则拒绝，失败不会留下伪装成 completed 的包。
+
+恢复包保留原出现编号、端点、角色、补空标志以及拒绝与聚合参与字段，可直接用
+现有 `trace-source` / `trace-output` / `node-balance` / `participation`
+复核旧发布（也能通过 `scripts/crosscheck_duckdb.py` 的独立原生 SQL 对账）。
+它不携带预演索引，**不能用于 `preview`**（该命令会明确拒绝），也不创建任何
+新的加工或预演结果。可重跑的端到端演练见 `scripts/archive_drill.py`。
+
 
 ## 更正预演（preview）
 
@@ -129,9 +180,11 @@ python3 -I bin/auditor preview --package out/pv_pkg --sink top1 --corrections co
 ```bash
 python3 -I tests/test_acceptance.py      # 34 用例，全部通过
 python3 -I tests/test_preview.py         # 44 个预演用例，全部通过
+python3 -I tests/test_archive.py         # 16 个历史库归档/恢复用例，全部通过
 python3 -I tests/test_cli.py             # 2 个 CLI 端到端用例
 python3 -I scripts/benchmark.py          # 高扇出分页/内存实测 → out/benchmark_result.json
 python3 -I scripts/crosscheck_duckdb.py tests/fixtures/main_demo.json out/demo_pkg
+python3 -I scripts/archive_drill.py      # 历史库演练：恢复对账/重试/冲突/中断/共享计量
 ```
 
 `tests/reference_interpreter.py` 是与生产代码零共享的独立解释器：它用显式出现编号

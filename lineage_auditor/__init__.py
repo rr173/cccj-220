@@ -8,6 +8,7 @@ Modules:
   preview         - read-only rehearsal of lookup corrections against a top_k sink list
   preview_support - run-time preparation of the narrow index tables preview reads
   package         - on-disk audit package lifecycle (build, open, cancel/failure marking)
+  archive         - content-addressed history library: archive/restore evidence versions
   cli             - command line interface
 """
 

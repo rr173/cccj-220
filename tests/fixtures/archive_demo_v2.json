@@ -1,0 +1,44 @@
+{
+  "sources": [
+    {
+      "name": "src_pairs",
+      "schema": {"k": "int64", "label": "text"},
+      "rows": [
+        {"row_id": 0, "values": {"k": 7, "label": "alpha"}},
+        {"row_id": 1, "values": {"k": 7, "label": "alpha"}},
+        {"row_id": 2, "values": {"k": 7, "label": "beta"}},
+        {"row_id": 3, "values": {"k": 9, "label": "gamma"}}
+      ]
+    },
+    {
+      "name": "src_members",
+      "schema": {"grp": "text", "amt": "int64"},
+      "rows": [
+        {"row_id": 0, "values": {"grp": "G", "amt": 10}},
+        {"row_id": 1, "values": {"grp": "G", "amt": 15}}
+      ]
+    }
+  ],
+  "nodes": [
+    {"id": "scan_pairs", "op": "scan", "source": "src_pairs"},
+    {"id": "scan_members", "op": "scan", "source": "src_members"},
+
+    {"id": "self_join", "op": "join", "kind": "inner",
+     "left": "scan_pairs", "right": "scan_pairs",
+     "on": [{"left": "k", "right": "k"}],
+     "right_prefix": "r_"},
+
+    {"id": "keep_positive", "op": "filter", "input": "scan_pairs",
+     "pred": {"kind": "cmp", "op": ">",
+              "left": {"kind": "col", "name": "k"},
+              "right": {"kind": "lit", "value": 7}}},
+
+    {"id": "grp_members", "op": "group", "input": "scan_members",
+     "keys": ["grp"],
+     "aggs": [
+       {"name": "n", "func": "count", "arg": null},
+       {"name": "amt_sum", "func": "sum", "arg": "amt"}
+     ]}
+  ],
+  "sinks": ["self_join", "keep_positive", "grp_members"]
+}
