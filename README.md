@@ -15,14 +15,17 @@ lineage_auditor/      生产包（不依赖 tests/）
   flow.py             流程模型、schema 解析、执行前校验
   executor.py         DuckDB 执行 + 出现/边/淘汰/参与证据落盘
   audit.py            trace-source / trace-output / node-balance（递归 CTE + 分页）
+  preview.py          更正预演：一批查找表更正 → 指定 top_k 名单的进出差异
+  preview_support.py  run 时一并构建的预演索引（点查专用单列表键）
   package.py          自包含审计包生命周期（running/completed/failed/cancelled）
   cli.py              命令行
 tests/
   reference_interpreter.py  独立小型出现级解释器（不 import 生产包/证据构建器）
   test_acceptance.py        业务袋 + 审计边全量对账，及边界语义测试（34 用例）
+  test_preview.py           预演验收（44 用例：语义/拒绝/不支持/规模/CLI）
   test_cli.py               CLI 端到端测试（2 用例）
   fixtures/                 main_demo / edge_cases / null_keys / unknown_residual
-                            / diamond / scale_benchmark
+                            / diamond / scale_benchmark / preview_demo
 scripts/benchmark.py        高扇出 + 大共同来源的分页/内存/证据规模实测
 scripts/crosscheck_duckdb.py 把流程渲染成原生 DuckDB SQL 重算，与落盘证据对账
 docs/handwritten_tables.md  主演练逐节点手写出现表与去向表
@@ -53,6 +56,51 @@ python3 -I bin/auditor participation --package out/demo_pkg --node grp_main --oc
 python3 -I bin/auditor copy-package --package out/demo_pkg --dest /tmp/pkg_copy
 ```
 
+## 更正预演（preview）
+
+名单发布前，如果要更正加工用查找表里的若干映射，`preview` 可以在**不动原审计包**
+的前提下预演：拿一份已完成的审计包 + 一批拟议更正，输出指定 `top_k` 名单的
+进出差异。它只预演——不修改原包、不生成第二份审计包、不提交更正。
+
+```bash
+# corrections.json: 按来源 row_id 删除整行，或保留 row_id 用整行替换（可改关联键）
+# {
+#   "source": "src_lookup",
+#   "corrections": [
+#     {"op": "replace", "row_id": 1, "values": {"k": 200, "flag": 1, "note": "moved"}},
+#     {"op": "delete", "row_id": 3}
+#   ]
+# }
+python3 -I bin/auditor run --flow tests/fixtures/preview_demo.json --package out/pv_pkg
+python3 -I bin/auditor preview --package out/pv_pkg --sink top1 --corrections corrections.json
+```
+
+输出按分区给出 `added` / `removed`：完整 sink 行值 + 出现次数差（同一行值进出
+相抵，仅顺序变化不算进出）；没有进出的分区不出现，整批无进出时 `partitions`
+为空。同一批更正一起生效；不存在的 row_id、重复操作、类型不符的替换行会被
+`rejected` 拒绝；更正当且仅当会让某分区的决胜字段元组变为空值或不再唯一时，
+整批被拒绝（即使冲突在名额之外），失败不输出部分差异。
+
+**支持范围**（不满足时以 `unsupported` 说明原因，绝不静默退回全流程重跑）：
+
+- 一次一个以 `top_k` 结尾的 sink + 一个 inline 查找来源；
+- 该来源在目标上游只能作为 `left` / `anti` join 的直接右侧 scan，且这些 join
+  的左输入不依赖该来源（左输入已在包里算好，直接复用）；
+- 从受影响 join 到终点只经过 filter / project / union_all 和最后的 top_k，
+  允许分支重新汇合；范围以该 sink 的祖先为准，无关节点不受限制。
+
+**语义与旧键新键**：复合等值键含 NULL 永不匹配；残余谓词只有 TRUE 才算有效
+匹配。`left` 保留每个有效匹配的出现，仅无匹配时补空；`anti` 要等最后一个有效
+匹配消失才释放左行。旧榜单外的行可能递补，新候选也可能把未被直接更正的记录
+挤出。排名沿用声明的排序、NULLS LAST 与决胜规则。
+
+**读取有界**：`run` 建包时已一并准备好预演索引（`preview.json` 无行结构 +
+单列键索引表）。预演本身不再解析含全量源行的 flow.json，也不整表读取/重算
+中间表——只按相关键、受影响出现和受影响分区做点查；输出里的 `read_stats`
+是实际读取观测，无关查找键与无关分区增多时保持不变（`tests/test_preview.py`
+的规模用例同时用 EXPLAIN ANALYZE 核对每条预演 SQL 都是 Index Scan）。
+旧包没有预演索引：不迁移，`preview` 会说明需重新 `run` 建包。
+
 ## 节点与证据模型
 
 | 节点 | 语义要点 | 淘汰 reason_code / 特殊边 |
@@ -80,6 +128,7 @@ python3 -I bin/auditor copy-package --package out/demo_pkg --dest /tmp/pkg_copy
 
 ```bash
 python3 -I tests/test_acceptance.py      # 34 用例，全部通过
+python3 -I tests/test_preview.py         # 44 个预演用例，全部通过
 python3 -I tests/test_cli.py             # 2 个 CLI 端到端用例
 python3 -I scripts/benchmark.py          # 高扇出分页/内存实测 → out/benchmark_result.json
 python3 -I scripts/crosscheck_duckdb.py tests/fixtures/main_demo.json out/demo_pkg

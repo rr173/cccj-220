@@ -7,6 +7,7 @@ Commands:
   node-balance  real occurrence accounting for every node
   participation count/sum membership evidence for one aggregate occurrence
   copy-package  produce an independent portable copy of a completed package
+  preview       rehearse lookup corrections against a top_k sink list
 """
 from __future__ import annotations
 
@@ -21,6 +22,7 @@ from . import flow as F
 from .audit import AuditReader
 from .executor import Executor
 from .package import AuditPackage, STATUS_CANCELLED, PackageError
+from .preview import PreviewError, preview
 
 
 def _load_flow(path: str) -> Dict[str, Any]:
@@ -116,6 +118,54 @@ def cmd_copy_package(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_preview(args: argparse.Namespace) -> int:
+    try:
+        with open(args.corrections, encoding="utf-8") as f:
+            doc = json.load(f)
+    except json.JSONDecodeError as exc:
+        print(json.dumps({"status": "rejected",
+                          "error": f"corrections file is not valid JSON: {exc}"},
+                         ensure_ascii=False, indent=2), file=sys.stderr)
+        return 2
+    if isinstance(doc, list):
+        file_source, corrections = None, doc
+    elif isinstance(doc, dict):
+        file_source = doc.get("source")
+        corrections = doc.get("corrections")
+        if corrections is None:
+            print(json.dumps({"status": "rejected",
+                              "error": "corrections file needs a 'corrections' array"},
+                             ensure_ascii=False, indent=2), file=sys.stderr)
+            return 2
+    else:
+        print(json.dumps({"status": "rejected",
+                          "error": "corrections file must be an object or an array"},
+                         ensure_ascii=False, indent=2), file=sys.stderr)
+        return 2
+    if args.source and file_source and args.source != file_source:
+        print(json.dumps(
+            {"status": "rejected",
+             "error": f"--source {args.source!r} disagrees with the corrections "
+                      f"file source {file_source!r}"},
+            ensure_ascii=False, indent=2), file=sys.stderr)
+        return 2
+    source = args.source or file_source
+    if not source:
+        print(json.dumps({"status": "rejected",
+                          "error": "no lookup source given: pass --source or set "
+                                   "'source' in the corrections file"},
+                         ensure_ascii=False, indent=2), file=sys.stderr)
+        return 2
+    try:
+        result = preview(args.package, args.sink, source, corrections)
+    except PreviewError as exc:
+        print(json.dumps({"status": exc.status, "error": exc.message},
+                         ensure_ascii=False, indent=2), file=sys.stderr)
+        return 2
+    _print(result)
+    return 0
+
+
 def cmd_recover(args: argparse.Namespace) -> int:
     """Explicitly close a package stuck in 'running' after a hard kill (SIGKILL)."""
     pkg = AuditPackage(args.package)
@@ -189,6 +239,19 @@ def build_parser() -> argparse.ArgumentParser:
     v = sub.add_parser("validate", help="validate a flow without executing")
     v.add_argument("--flow", required=True)
     v.set_defaults(fn=cmd_validate)
+
+    pv = sub.add_parser(
+        "preview",
+        help="rehearse a batch of lookup corrections against a top_k sink list "
+             "(read-only: the package is never modified)")
+    pv.add_argument("--package", required=True)
+    pv.add_argument("--sink", required=True, help="a declared sink ending with top_k")
+    pv.add_argument("--source", help="inline lookup source being corrected "
+                                     "(may also be set inside the corrections file)")
+    pv.add_argument("--corrections", required=True,
+                    help="JSON file: {'source': name, 'corrections': [...]} or a "
+                         "bare array of {op: delete|replace, row_id, values?}")
+    pv.set_defaults(fn=cmd_preview)
 
     rc = sub.add_parser("recover", help="mark a hard-killed 'running' package failed")
     rc.add_argument("--package", required=True)

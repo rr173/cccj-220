@@ -1,0 +1,70 @@
+{
+  "sources": [
+    {
+      "name": "src_records",
+      "schema": {"rec": "int64", "part": "text", "lk": "int64", "score": "int64", "tie": "int64"},
+      "rows": [
+        {"row_id": 1, "values": {"rec": 1, "part": "A", "lk": 9001, "score": 50, "tie": 1}},
+        {"row_id": 2, "values": {"rec": 2, "part": "A", "lk": 9002, "score": 40, "tie": 2}},
+        {"row_id": 3, "values": {"rec": 3, "part": "A", "lk": 100, "score": 45, "tie": 3}},
+        {"row_id": 11, "values": {"rec": 11, "part": "B", "lk": 200, "score": 60, "tie": 1}},
+        {"row_id": 12, "values": {"rec": 12, "part": "B", "lk": 9003, "score": 55, "tie": 2}},
+        {"row_id": 13, "values": {"rec": 13, "part": "B", "lk": 9004, "score": 30, "tie": 3}},
+        {"row_id": 21, "values": {"rec": 21, "part": "C", "lk": 300, "score": 70, "tie": 1}},
+        {"row_id": 22, "values": {"rec": 22, "part": "C", "lk": 9005, "score": 65, "tie": 2}},
+        {"row_id": 23, "values": {"rec": 23, "part": "C", "lk": 9006, "score": 10, "tie": 3}}
+      ]
+    },
+    {
+      "name": "src_lookup",
+      "schema": {"k": "int64", "flag": "int64", "note": "text"},
+      "rows": [
+        {"row_id": 1, "values": {"k": 100, "flag": 1, "note": "will-move"}},
+        {"row_id": 2, "values": {"k": 100, "flag": null, "note": "unknown-residual-stays"}},
+        {"row_id": 3, "values": {"k": 300, "flag": 1, "note": "control-delete"}},
+        {"row_id": 4, "values": {"k": 300, "flag": 2, "note": "control-keeps-blocking"}},
+        {"row_id": 5, "values": {"k": 999, "flag": 1, "note": "unrelated"}}
+      ]
+    },
+    {
+      "name": "src_other",
+      "schema": {"z": "int64"},
+      "rows": [
+        {"row_id": 1, "values": {"z": 1}}
+      ]
+    }
+  ],
+  "nodes": [
+    {"id": "scan_rec", "op": "scan", "source": "src_records"},
+    {"id": "scan_lk", "op": "scan", "source": "src_lookup"},
+    {"id": "scan_other", "op": "scan", "source": "src_other"},
+
+    {"id": "anti_j", "op": "join", "kind": "anti",
+     "left": "scan_rec", "right": "scan_lk",
+     "on": [{"left": "lk", "right": "k"}],
+     "residual": {"kind": "cmp", "op": ">",
+                  "left": {"kind": "col", "name": "r_flag"},
+                  "right": {"kind": "lit", "value": 0}},
+     "right_prefix": "r_"},
+
+    {"id": "proj_list", "op": "project", "input": "anti_j",
+     "columns": [
+       {"name": "rec", "keep": "rec"},
+       {"name": "part", "keep": "part"},
+       {"name": "score", "keep": "score"},
+       {"name": "tie", "keep": "tie"}
+     ]},
+
+    {"id": "top1", "op": "top_k", "input": "proj_list", "k": 2,
+     "partition_by": ["part"],
+     "order_by": [
+       {"expr": {"kind": "col", "name": "score"}, "dir": "desc"},
+       {"expr": {"kind": "col", "name": "tie"}, "dir": "asc", "decisive": true}
+     ]},
+
+    {"id": "grp_other", "op": "group", "input": "scan_rec",
+     "keys": ["part"],
+     "aggs": [{"name": "n", "func": "count", "arg": null}]}
+  ],
+  "sinks": ["top1", "grp_other"]
+}

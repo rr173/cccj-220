@@ -6,6 +6,8 @@ A package directory is a self-contained, copyable unit::
       manifest.json     status + flow fingerprint + engine versions
       flow.json         exact declarative flow the package was built from
       evidence.duckdb   occurrences, edges, rejects, participation (all evidence)
+                        plus the narrow preview index tables
+      preview.json      row-less flow structure for the preview command
 
 A package that is cancelled or fails is explicitly marked non-completed and every
 trace command refuses it: a half-built package can never be served as a normal trace.
@@ -99,6 +101,7 @@ class AuditPackage:
         self.manifest_path = os.path.join(self.path, "manifest.json")
         self.flow_path = os.path.join(self.path, "flow.json")
         self.db_path = os.path.join(self.path, "evidence.duckdb")
+        self.preview_path = os.path.join(self.path, "preview.json")
 
     # ------------------------------------------------------------------ #
     @classmethod

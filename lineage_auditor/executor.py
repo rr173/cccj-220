@@ -108,9 +108,21 @@ class Executor:
         # indexes after the bulk load, in their own transaction
         from .package import EVIDENCE_INDEXES
         self.con.execute(EVIDENCE_INDEXES)
-        self.con.execute("CHECKPOINT")
+        # preview-support structures (row-less structure + narrow index tables)
+        from . import preview_support
+        try:
+            preview_info = preview_support.build(self.flow, self.pkg, self.con)
+            self.con.execute("CHECKPOINT")
+        except BaseException as exc:
+            try:
+                self.con.execute("ROLLBACK")
+            except Exception:
+                pass
+            self.pkg.mark_failed(exc)
+            self.con.close()
+            raise
         self.con.close()
-        self.pkg.mark_completed({"nodes": len(self.nodes)})
+        self.pkg.mark_completed({"nodes": len(self.nodes), "preview": preview_info})
         return self.stats
 
     # ------------------------------------------------------------------ #
@@ -625,8 +637,9 @@ class Executor:
             return {"__null__": True}
         return v
 
+    @staticmethod
     def _sort_key(
-        self, row: Dict[str, Any], terms: List[Dict[str, Any]]
+        row: Dict[str, Any], terms: List[Dict[str, Any]]
     ) -> List[Tuple[int, Any]]:
         key: List[Tuple[int, Any]] = []
         for term in terms:
