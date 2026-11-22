@@ -1,0 +1,121 @@
+{
+  "sources": [
+    {
+      "name": "t_src",
+      "schema": {"grp": "int64", "amount": "int64", "name": "text", "flag": "bool"},
+      "rows": [
+        {"row_id": 1, "values": {"grp": 1, "amount": null, "name": "n1", "flag": true}},
+        {"row_id": 2, "values": {"grp": 1, "amount": 5, "name": "n2", "flag": false}},
+        {"row_id": 3, "values": {"grp": 1, "amount": 10, "name": "n3", "flag": null}},
+        {"row_id": 4, "values": {"grp": 2, "amount": 7, "name": "n4", "flag": true}}
+      ]
+    },
+    {
+      "name": "t_right",
+      "schema": {"grp": "int64", "code": "text", "rv": "int64"},
+      "rows": [
+        {"row_id": 101, "values": {"grp": 1, "code": null, "rv": 1}},
+        {"row_id": 102, "values": {"grp": 1, "code": null, "rv": 2}},
+        {"row_id": 103, "values": {"grp": 2, "code": "x", "rv": 3}}
+      ]
+    },
+    {
+      "name": "t_anti_r",
+      "schema": {"grp": "int64", "code": "text"},
+      "rows": [
+        {"row_id": 201, "values": {"grp": 2, "code": "x"}}
+      ]
+    },
+    {
+      "name": "t_empty",
+      "schema": {"grp": "int64", "amount": "int64"},
+      "rows": []
+    },
+    {
+      "name": "t_dup",
+      "schema": {"v": "int64"},
+      "rows": [
+        {"row_id": 301, "values": {"v": 9}},
+        {"row_id": 302, "values": {"v": 9}}
+      ]
+    },
+    {
+      "name": "t_top",
+      "schema": {"p": "int64", "score": "int64", "tie": "int64"},
+      "rows": [
+        {"row_id": 401, "values": {"p": 1, "score": 5, "tie": 1}},
+        {"row_id": 402, "values": {"p": 1, "score": 5, "tie": 2}},
+        {"row_id": 403, "values": {"p": 1, "score": 3, "tie": 9}},
+        {"row_id": 404, "values": {"p": 2, "score": 8, "tie": 1}}
+      ]
+    },
+    {
+      "name": "t_pad",
+      "schema": {"k": "int64", "own_null": "int64"},
+      "rows": [
+        {"row_id": 501, "values": {"k": 7, "own_null": null}}
+      ]
+    },
+    {
+      "name": "t_pad_r",
+      "schema": {"k": "int64"},
+      "rows": [
+        {"row_id": 601, "values": {"k": 8}}
+      ]
+    }
+  ],
+  "nodes": [
+    {"id": "s_src", "op": "scan", "source": "t_src"},
+    {"id": "s_right", "op": "scan", "source": "t_right"},
+    {"id": "s_anti_r", "op": "scan", "source": "t_anti_r"},
+    {"id": "s_empty", "op": "scan", "source": "t_empty"},
+    {"id": "s_dup", "op": "scan", "source": "t_dup"},
+    {"id": "s_top", "op": "scan", "source": "t_top"},
+    {"id": "s_pad", "op": "scan", "source": "t_pad"},
+    {"id": "s_pad_r", "op": "scan", "source": "t_pad_r"},
+
+    {"id": "f_unknown", "op": "filter", "input": "s_src",
+     "pred": {"kind": "cmp", "op": ">",
+              "left": {"kind": "col", "name": "amount"},
+              "right": {"kind": "lit", "value": 4}}},
+
+    {"id": "j_nullkey", "op": "join", "kind": "inner",
+     "left": "s_src", "right": "s_right",
+     "on": [{"left": "grp", "right": "grp"},
+            {"left": "name", "right": "code"}],
+     "right_prefix": "r_"},
+
+    {"id": "anti_j", "op": "join", "kind": "anti",
+     "left": "s_src", "right": "s_anti_r",
+     "on": [{"left": "grp", "right": "grp"}],
+     "right_prefix": "r_"},
+
+    {"id": "empty_grp", "op": "group", "input": "s_empty",
+     "keys": ["grp"],
+     "aggs": [
+       {"name": "cnt", "func": "count", "arg": null},
+       {"name": "amt", "func": "sum", "arg": "amount"}
+     ]},
+
+    {"id": "dup_a", "op": "project", "input": "s_dup",
+     "columns": [{"name": "v", "keep": "v"}]},
+    {"id": "dup_b", "op": "project", "input": "s_dup",
+     "columns": [{"name": "v", "keep": "v"}]},
+    {"id": "dup_union", "op": "union_all", "inputs": ["dup_a", "dup_b"]},
+    {"id": "dup_distinct", "op": "distinct", "input": "dup_union", "keys": ["v"]},
+
+    {"id": "top1", "op": "top_k", "input": "s_top", "k": 1,
+     "partition_by": ["p"],
+     "order_by": [
+       {"expr": {"kind": "col", "name": "score"}, "dir": "desc", "decisive": false},
+       {"expr": {"kind": "col", "name": "tie"}, "dir": "asc", "decisive": true}
+     ]},
+
+    {"id": "pad_join", "op": "join", "kind": "left",
+     "left": "s_pad", "right": "s_pad_r",
+     "on": [{"left": "k", "right": "k"}],
+     "right_prefix": "r_"}
+  ],
+  "sinks": ["f_unknown", "j_nullkey", "anti_j", "empty_grp",
+            "dup_distinct", "top1", "pad_join"]
+}

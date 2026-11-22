@@ -1,0 +1,100 @@
+{
+  "sources": [
+    {
+      "name": "src_main",
+      "schema": {"grp": "int64", "amount": "int64", "tag": "text"},
+      "rows": [
+        {"row_id": 1, "values": {"grp": 7, "amount": 2, "tag": "a"}},
+        {"row_id": 2, "values": {"grp": 7, "amount": -2, "tag": "b"}},
+        {"row_id": 3, "values": {"grp": 7, "amount": null, "tag": "c"}}
+      ]
+    },
+    {
+      "name": "src_dup",
+      "schema": {"val": "int64"},
+      "rows": [
+        {"row_id": 10, "values": {"val": 42}},
+        {"row_id": 11, "values": {"val": 42}}
+      ]
+    },
+    {
+      "name": "src_partial",
+      "schema": {"k": "int64", "v": "text"},
+      "rows": [
+        {"row_id": 20, "values": {"k": 1, "v": "p"}}
+      ]
+    },
+    {
+      "name": "src_right",
+      "schema": {"k": "int64", "rv": "int64"},
+      "rows": [
+        {"row_id": 30, "values": {"k": 1, "rv": 10}},
+        {"row_id": 31, "values": {"k": 1, "rv": 20}}
+      ]
+    },
+    {
+      "name": "src_lj",
+      "schema": {"k": "int64", "note": "text"},
+      "rows": [
+        {"row_id": 40, "values": {"k": 99, "note": "lonely"}}
+      ]
+    },
+    {
+      "name": "src_ljr",
+      "schema": {"k": "int64", "info": "text"},
+      "rows": [
+        {"row_id": 50, "values": {"k": 1, "info": "matched-elsewhere"}}
+      ]
+    }
+  ],
+  "nodes": [
+    {"id": "scan_main", "op": "scan", "source": "src_main"},
+    {"id": "scan_dup", "op": "scan", "source": "src_dup"},
+    {"id": "scan_partial", "op": "scan", "source": "src_partial"},
+    {"id": "scan_right", "op": "scan", "source": "src_right"},
+    {"id": "scan_lj", "op": "scan", "source": "src_lj"},
+    {"id": "scan_ljr", "op": "scan", "source": "src_ljr"},
+
+    {"id": "grp_main", "op": "group", "input": "scan_main",
+     "keys": ["grp"],
+     "aggs": [
+       {"name": "cnt", "func": "count", "arg": null},
+       {"name": "amt_sum", "func": "sum", "arg": "amount"}
+     ]},
+
+    {"id": "distinct_dup", "op": "distinct", "input": "scan_dup", "keys": ["val"]},
+
+    {"id": "f_gt2", "op": "filter", "input": "scan_main",
+     "pred": {"kind": "cmp", "op": ">",
+              "left": {"kind": "col", "name": "amount"},
+              "right": {"kind": "lit", "value": 2}}},
+
+    {"id": "left_branch", "op": "join", "kind": "left",
+     "left": "scan_lj", "right": "scan_ljr",
+     "on": [{"left": "k", "right": "k"}],
+     "right_prefix": "r_"},
+
+    {"id": "proj_filter_branch", "op": "project", "input": "f_gt2",
+     "columns": [
+       {"name": "branch", "expr": {"kind": "lit", "value": "filter-branch"}},
+       {"name": "note", "keep": "tag"}
+     ]},
+    {"id": "proj_left_branch", "op": "project", "input": "left_branch",
+     "columns": [
+       {"name": "branch", "expr": {"kind": "lit", "value": "leftjoin-branch"}},
+       {"name": "note", "keep": "note"}
+     ]},
+
+    {"id": "union_branches", "op": "union_all",
+     "inputs": ["proj_filter_branch", "proj_left_branch"]},
+
+    {"id": "partial_join", "op": "join", "kind": "inner",
+     "left": "scan_partial", "right": "scan_right",
+     "on": [{"left": "k", "right": "k"}],
+     "residual": {"kind": "cmp", "op": ">",
+                  "left": {"kind": "col", "name": "r_rv"},
+                  "right": {"kind": "lit", "value": 15}},
+     "right_prefix": "r_"}
+  ],
+  "sinks": ["grp_main", "distinct_dup", "union_branches", "partial_join", "left_branch"]
+}

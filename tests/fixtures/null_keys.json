@@ -1,0 +1,42 @@
+{
+  "sources": [
+    {
+      "name": "nl_left",
+      "schema": {"k1": "int64", "k2": "text", "v": "int64"},
+      "rows": [
+        {"row_id": 1, "values": {"k1": null, "k2": "x", "v": 10}},
+        {"row_id": 2, "values": {"k1": 1, "k2": null, "v": 20}},
+        {"row_id": 3, "values": {"k1": 1, "k2": "y", "v": 30}}
+      ]
+    },
+    {
+      "name": "nl_right",
+      "schema": {"k1": "int64", "k2": "text", "w": "int64"},
+      "rows": [
+        {"row_id": 11, "values": {"k1": null, "k2": "x", "w": 100}},
+        {"row_id": 12, "values": {"k1": 1, "k2": null, "w": 200}},
+        {"row_id": 13, "values": {"k1": 1, "k2": "y", "w": 300}}
+      ]
+    }
+  ],
+  "nodes": [
+    {"id": "nl_scan_l", "op": "scan", "source": "nl_left"},
+    {"id": "nl_scan_r", "op": "scan", "source": "nl_right"},
+    {"id": "nl_inner", "op": "join", "kind": "inner",
+     "left": "nl_scan_l", "right": "nl_scan_r",
+     "on": [{"left": "k1", "right": "k1"},
+            {"left": "k2", "right": "k2"}],
+     "right_prefix": "r_"},
+    {"id": "nl_left", "op": "join", "kind": "left",
+     "left": "nl_scan_l", "right": "nl_scan_r",
+     "on": [{"left": "k1", "right": "k1"},
+            {"left": "k2", "right": "k2"}],
+     "right_prefix": "r_"},
+    {"id": "nl_anti", "op": "join", "kind": "anti",
+     "left": "nl_scan_l", "right": "nl_scan_r",
+     "on": [{"left": "k1", "right": "k1"},
+            {"left": "k2", "right": "k2"}],
+     "right_prefix": "r_"}
+  ],
+  "sinks": ["nl_inner", "nl_left", "nl_anti"]
+}

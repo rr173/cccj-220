@@ -1,0 +1,51 @@
+{
+  "sources": [
+    {
+      "name": "d_src",
+      "schema": {"v": "int64"},
+      "rows": [
+        {"row_id": 1, "values": {"v": 10}}
+      ]
+    },
+    {
+      "name": "d_r1",
+      "schema": {"k": "int64", "x": "int64"},
+      "rows": [
+        {"row_id": 10, "values": {"k": 10, "x": 1}}
+      ]
+    },
+    {
+      "name": "d_r2",
+      "schema": {"k": "int64", "y": "int64"},
+      "rows": [
+        {"row_id": 20, "values": {"k": 10, "y": 2}}
+      ]
+    }
+  ],
+  "nodes": [
+    {"id": "d_scan", "op": "scan", "source": "d_src"},
+    {"id": "d_sr1", "op": "scan", "source": "d_r1"},
+    {"id": "d_sr2", "op": "scan", "source": "d_r2"},
+
+    {"id": "d_j1", "op": "join", "kind": "inner",
+     "left": "d_scan", "right": "d_sr1",
+     "on": [{"left": "v", "right": "k"}], "right_prefix": "r1_"},
+    {"id": "d_j2", "op": "join", "kind": "inner",
+     "left": "d_scan", "right": "d_sr2",
+     "on": [{"left": "v", "right": "k"}], "right_prefix": "r2_"},
+
+    {"id": "d_p1", "op": "project", "input": "d_j1",
+     "columns": [
+       {"name": "v", "keep": "v"},
+       {"name": "z", "keep": "r1_x"}
+     ]},
+    {"id": "d_p2", "op": "project", "input": "d_j2",
+     "columns": [
+       {"name": "v", "keep": "v"},
+       {"name": "z", "keep": "r2_y"}
+     ]},
+
+    {"id": "d_union", "op": "union_all", "inputs": ["d_p1", "d_p2"]}
+  ],
+  "sinks": ["d_union"]
+}

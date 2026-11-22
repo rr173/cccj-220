@@ -1,0 +1,38 @@
+{
+  "sources": [
+    {
+      "name": "u_src",
+      "schema": {"k": "int64", "x": "int64"},
+      "rows": [
+        {"row_id": 1, "values": {"k": null, "x": 1}},
+        {"row_id": 2, "values": {"k": 1, "x": null}},
+        {"row_id": 3, "values": {"k": 1, "x": 5}}
+      ]
+    },
+    {
+      "name": "u_r",
+      "schema": {"k": "int64", "y": "int64"},
+      "rows": [
+        {"row_id": 10, "values": {"k": 1, "y": 100}}
+      ]
+    }
+  ],
+  "nodes": [
+    {"id": "u_scan", "op": "scan", "source": "u_src"},
+    {"id": "u_scan_r", "op": "scan", "source": "u_r"},
+
+    {"id": "u_inner_resid", "op": "join", "kind": "inner",
+     "left": "u_scan", "right": "u_scan_r",
+     "on": [{"left": "k", "right": "k"}],
+     "residual": {"kind": "cmp", "op": "<",
+                  "left": {"kind": "col", "name": "x"},
+                  "right": {"kind": "col", "name": "r_y"}},
+     "right_prefix": "r_"},
+
+    {"id": "u_anti", "op": "join", "kind": "anti",
+     "left": "u_scan", "right": "u_scan_r",
+     "on": [{"left": "k", "right": "k"}],
+     "right_prefix": "r_"}
+  ],
+  "sinks": ["u_inner_resid", "u_anti"]
+}

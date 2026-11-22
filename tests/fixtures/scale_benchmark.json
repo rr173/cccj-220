@@ -1,0 +1,107 @@
+{
+  "sources": [
+    {
+      "name": "big_left",
+      "type": "generate",
+      "count": 1000,
+      "schema": {
+        "grp": "int64",
+        "amount": "int64"
+      },
+      "generate": {
+        "grp": {
+          "kind": "lit",
+          "value": 0
+        },
+        "amount": "row_id"
+      }
+    },
+    {
+      "name": "big_right",
+      "type": "generate",
+      "count": 100,
+      "schema": {
+        "grp": "int64",
+        "rv": "int64"
+      },
+      "generate": {
+        "grp": {
+          "kind": "lit",
+          "value": 0
+        },
+        "rv": "row_id"
+      }
+    },
+    {
+      "name": "wide_members",
+      "type": "generate",
+      "count": 10000,
+      "schema": {
+        "grp": "int64",
+        "amount": "int64"
+      },
+      "generate": {
+        "grp": {
+          "kind": "lit",
+          "value": 0
+        },
+        "amount": "row_id"
+      }
+    }
+  ],
+  "nodes": [
+    {
+      "id": "scan_l",
+      "op": "scan",
+      "source": "big_left"
+    },
+    {
+      "id": "scan_r",
+      "op": "scan",
+      "source": "big_right"
+    },
+    {
+      "id": "scan_m",
+      "op": "scan",
+      "source": "wide_members"
+    },
+    {
+      "id": "fanout_join",
+      "op": "join",
+      "kind": "inner",
+      "left": "scan_l",
+      "right": "scan_r",
+      "on": [
+        {
+          "left": "grp",
+          "right": "grp"
+        }
+      ],
+      "right_prefix": "r_"
+    },
+    {
+      "id": "big_group",
+      "op": "group",
+      "input": "scan_m",
+      "keys": [
+        "grp"
+      ],
+      "aggs": [
+        {
+          "name": "cnt",
+          "func": "count",
+          "arg": null
+        },
+        {
+          "name": "amt_sum",
+          "func": "sum",
+          "arg": "amount"
+        }
+      ]
+    }
+  ],
+  "sinks": [
+    "fanout_join",
+    "big_group"
+  ]
+}

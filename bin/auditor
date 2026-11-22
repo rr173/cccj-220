@@ -1,0 +1,15 @@
+#!/usr/bin/env python3
+"""Runner that puts the vendored duckdb wheel on sys.path before importing."""
+import os
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+VENDOR = os.path.join(ROOT, "vendor", "duckdb_pkg")
+if os.path.isdir(VENDOR) and VENDOR not in sys.path:
+    sys.path.insert(0, VENDOR)
+sys.path.insert(0, ROOT)
+
+from lineage_auditor.cli import main  # noqa: E402
+
+if __name__ == "__main__":
+    raise SystemExit(main())

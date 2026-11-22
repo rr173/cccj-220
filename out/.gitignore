@@ -1,0 +1,5 @@
+# 生成的审计包与基准结果（可由流程重建，不入库）
+benchmark_pkg/
+demo_pkg/
+benchmark_result.json
+*.duckdb.wal
